@@ -97,11 +97,12 @@ void print_array(float *arr, int len, int rank) {
 	printf("\n");
 }
 
-int is_sort_done(Proc_info *proc_info, int is_changed, int &double_check) {
-	int is_continue, rc;
-	rc = MPI_Allreduce(&is_changed, &is_continue, 1, MPI_INT, MPI_LOR, proc_info->group_info.comm);
+// done return 1. continue return 0.
+int is_sort_done(Proc_info *proc_info, unsigned long *is_changed, unsigned long *is_continue, int &double_check) {
+	int rc;
+	rc = MPI_Allreduce(is_changed, is_continue, 1, MPI_UNSIGNED_LONG, MPI_BOR, proc_info->group_info.comm);
 	if (rc != MPI_SUCCESS) printf("error: allreduce error.\n");
-	if (!is_continue) {
+	if (*is_continue == 0) {
 		if (double_check) {
 			return 1;
 		}
@@ -114,7 +115,7 @@ int is_sort_done(Proc_info *proc_info, int is_changed, int &double_check) {
 }
 
 // if no exchange return 0, else return 1
-int cmp_and_swap(float *local_data, float *remote_data, int local_len, int remote_len, int local_is_small_part, int rank) {
+unsigned long cmp_and_swap(float *local_data, float *remote_data, int local_len, int remote_len, int local_is_small_part, int rank) {
 	int local_index, remote_index, tmp_index;
 	float *tmp_data = (float *)malloc(sizeof(float) * local_len);
 
@@ -154,6 +155,7 @@ int cmp_and_swap(float *local_data, float *remote_data, int local_len, int remot
 
 void odd_even_sort(Proc_info *proc_info) {
 	int rc, double_check = 0;
+	unsigned long is_continue = 0, is_changed = 0;
 
 	float *pre_buffer, *next_buffer;
 	pre_buffer = (float *)malloc(sizeof(float) * proc_info->pre_len);
@@ -163,42 +165,47 @@ void odd_even_sort(Proc_info *proc_info) {
 
 	for (int round = 0;; round++) {
 		int odd_or_even_phase = round % 2;		// 1 is odd. 0 is even
-		int is_changed = 0;
 
 		MPI_Request send_requset;
 		MPI_Status send_status, recv_status;
 		if (!(odd_or_even_phase ^ (proc_info->rank % 2))) {
 			// send to next process
 			if (proc_info->rank != proc_info->total_proc - 1) {
-				rc = MPI_Isend(proc_info->data, proc_info->len, MPI_FLOAT, proc_info->rank + 1, 0, proc_info->group_info.comm, &send_requset);
-				if (rc != MPI_SUCCESS) printf("error: send; rank: %d, round: %d.\n", proc_info->rank, round);
+				if (is_changed || (is_continue & 1UL << (proc_info->rank + 1)) || round < 2) {
+					rc = MPI_Isend(proc_info->data, proc_info->len, MPI_FLOAT, proc_info->rank + 1, 0, proc_info->group_info.comm, &send_requset);
+					if (rc != MPI_SUCCESS) printf("error: send; rank: %d, round: %d.\n", proc_info->rank, round);
 
-				rc = MPI_Recv(next_buffer, proc_info->next_len, MPI_FLOAT, proc_info->rank + 1, MPI_ANY_TAG, proc_info->group_info.comm, &recv_status);
-				if (rc != MPI_SUCCESS) printf("error: recv; rank: %d, round: %d.\n", proc_info->rank, round);
+					rc = MPI_Recv(next_buffer, proc_info->next_len, MPI_FLOAT, proc_info->rank + 1, MPI_ANY_TAG, proc_info->group_info.comm, &recv_status);
+					if (rc != MPI_SUCCESS) printf("error: recv; rank: %d, round: %d.\n", proc_info->rank, round);
 
-				rc = MPI_Wait(&send_requset, &send_status);
-				if (rc != MPI_SUCCESS) printf("error: wait send; rank: %d, round: %d.\n", proc_info->rank, round);
+					rc = MPI_Wait(&send_requset, &send_status);
+					if (rc != MPI_SUCCESS) printf("error: wait send; rank: %d, round: %d.\n", proc_info->rank, round);
 
-				is_changed = cmp_and_swap(proc_info->data, next_buffer, proc_info->len, proc_info->next_len, 1, proc_info->rank);
+					is_changed = cmp_and_swap(proc_info->data, next_buffer, proc_info->len, proc_info->next_len, 1, proc_info->rank);
+					is_changed = is_changed << proc_info->rank;
+				}
 			}
 		} else {
 			// send to previous process
 			if (proc_info->rank != 0) {
-				rc = MPI_Isend(proc_info->data, proc_info->len, MPI_FLOAT, proc_info->rank - 1, 0, proc_info->group_info.comm, &send_requset);
-				if (rc != MPI_SUCCESS) printf("error: send; rank: %d, round: %d.\n", proc_info->rank, round);
-				
-				rc = MPI_Recv(pre_buffer, proc_info->pre_len, MPI_FLOAT, proc_info->rank - 1, MPI_ANY_TAG, proc_info->group_info.comm, &recv_status);
-				if (rc != MPI_SUCCESS) printf("error: recv; rank: %d, round: %d.\n", proc_info->rank, round);
-				
-				rc = MPI_Wait(&send_requset, &send_status);
-				if (rc != MPI_SUCCESS) printf("error: wait send; rank: %d, round: %d.\n", proc_info->rank, round);
+				if (is_changed || (is_continue & 1UL << (proc_info->rank - 1)) || round < 2) {
+					rc = MPI_Isend(proc_info->data, proc_info->len, MPI_FLOAT, proc_info->rank - 1, 0, proc_info->group_info.comm, &send_requset);
+					if (rc != MPI_SUCCESS) printf("error: send; rank: %d, round: %d.\n", proc_info->rank, round);
+					
+					rc = MPI_Recv(pre_buffer, proc_info->pre_len, MPI_FLOAT, proc_info->rank - 1, MPI_ANY_TAG, proc_info->group_info.comm, &recv_status);
+					if (rc != MPI_SUCCESS) printf("error: recv; rank: %d, round: %d.\n", proc_info->rank, round);
+					
+					rc = MPI_Wait(&send_requset, &send_status);
+					if (rc != MPI_SUCCESS) printf("error: wait send; rank: %d, round: %d.\n", proc_info->rank, round);
 
-				is_changed = cmp_and_swap(proc_info->data, pre_buffer, proc_info->len, proc_info->pre_len, 0, proc_info->rank);
+					is_changed = cmp_and_swap(proc_info->data, pre_buffer, proc_info->len, proc_info->pre_len, 0, proc_info->rank);
+					is_changed = is_changed << proc_info->rank;
+				}
 			}
 		}
 
-		// check if it's done
-		if (is_sort_done(proc_info, is_changed, double_check)) {
+		is_continue = 0;	// reset check point.
+		if (is_sort_done(proc_info, &is_changed, &is_continue, double_check)) {
 			break;
 		}
 	}
