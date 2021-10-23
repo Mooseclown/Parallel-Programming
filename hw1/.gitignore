@@ -1,0 +1,4 @@
+*.answer
+*.output
+hw1
+mpiio.cc
