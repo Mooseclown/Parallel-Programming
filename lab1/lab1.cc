@@ -3,7 +3,7 @@
 #include <math.h>
 #include <mpi.h>
 
-#define LARGE_NUMBER 18,446,744,073,709,551,615/2
+#define ULL_MAX 	~0ULL
 int main(int argc, char** argv) {
 	if (argc != 3) {
 		fprintf(stderr, "must provide exactly 2 arguments!\n");
@@ -20,11 +20,13 @@ int main(int argc, char** argv) {
 	unsigned long long k = atoll(argv[2]);
 	unsigned long long pixels = 0;
 	unsigned long long total_pixels = 0;
+	unsigned long long square_r = r*r;
+	unsigned long long limit = k <= r ? ULL_MAX - r : k;
+
 	for (unsigned long long x = rank; x < r; x += size) {
-		unsigned long long y = ceil(sqrtl(r*r - x*x));
-		if (y >= LARGE_NUMBER)
-			pixels += y;
-		if (pixels >= LARGE_NUMBER)
+		unsigned long long y = ceil(sqrtl(square_r - x*x));
+		pixels += y;
+		if (pixels >= limit)
 			pixels %= k;
 	}
 	MPI_Reduce(&pixels, &total_pixels, 1, MPI_UNSIGNED_LONG_LONG , MPI_SUM, size - 1, MPI_COMM_WORLD);
