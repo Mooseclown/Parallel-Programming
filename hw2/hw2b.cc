@@ -183,11 +183,9 @@ void slave(process_info *p_info) {
     MPI_Status recv_status;
     do {
         mandelbrot_set(p_info, row_idx, image, p_info->ncpus);
-
-        /* asyn send row buffer */
+        
+        /* get next row index */
         MPI_Send(&image[row_idx * p_info->width], p_info->width, MPI_INT, p_info->tasks - 1, row_idx, MPI_COMM_WORLD);
-
-
         MPI_Recv(&row_idx, 1, MPI_INT, p_info->tasks - 1, MPI_ANY_TAG, MPI_COMM_WORLD, &recv_status);
 
     } while (row_idx < p_info->height);
@@ -200,67 +198,59 @@ void master(process_info *p_info, const char *filename) {
     int* image = (int*)malloc(p_info->width * p_info->height * sizeof(int));
     assert(image);
 
-    int next_row = p_info->tasks;
-    omp_lock_t next_row_lock;
-    omp_init_lock(&next_row_lock);
+    int next_row = p_info->tasks - 1;
 
-    int remote = p_info->tasks - 1;
-
-    #pragma omp parallel num_threads(2) default(shared)
+    #pragma omp parallel num_threads(p_info->ncpus) default(shared)
     {
-        #pragma omp sections
+        /* receive row buffer and send row index to remote */
+        #pragma omp master
         {
-            /* receive row buffer and write png */
-            #pragma omp section
-            {
-                /* allocate memory for row buffer */
-                int *row_buffer = (int *)malloc(p_info->width * sizeof(int));
+            /* allocate memory for row buffer */
+            int *row_buffer = (int *)malloc(p_info->width * sizeof(int));
 
-                int recv_tasks = 0, buffer_idx, temp;
-                MPI_Request recv_request;
-                MPI_Status recv_status;
-                while (1) {
-                    memset(row_buffer, 0, p_info->width * sizeof(int));
-                    MPI_Recv(row_buffer, p_info->width, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &recv_status);
-                    
-                    omp_set_lock(&next_row_lock);
+            int temp, remote = p_info->tasks - 1;
+            MPI_Status recv_status;
+            while (1) {
+                memset(row_buffer, 0, p_info->width * sizeof(int));
+                MPI_Recv(row_buffer, p_info->width, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &recv_status);
+                
+                #pragma omp critical
+                {
                     temp = next_row++;
-                    omp_unset_lock(&next_row_lock);
+                }
 
-                    MPI_Send(&temp, 1, MPI_INT, recv_status.MPI_SOURCE, 0, MPI_COMM_WORLD);
+                MPI_Send(&temp, 1, MPI_INT, recv_status.MPI_SOURCE, 0, MPI_COMM_WORLD);
 
-                    buffer_idx = recv_status.MPI_TAG;
-                    copy_row_to_image(image, row_buffer, buffer_idx, p_info->width);
-                    ++recv_tasks;
-                    
-                    if (temp >= p_info->height) {
-                        if (--remote == 0) {
-                            break;
-                        }
+                copy_row_to_image(image, row_buffer, recv_status.MPI_TAG, p_info->width);
+                
+                if (temp >= p_info->height) {
+                    if (--remote == 0) {
+                        break;
                     }
                 }
-                free(row_buffer);
             }
+            free(row_buffer);
+        }
 
-            /* mandelbrot_set */
-            #pragma omp section
-            {
-                int row_idx = p_info->rank;
-                do {
-                    mandelbrot_set(p_info, row_idx, image, p_info->ncpus - 1);
-
-                    /* get next row index */
-                    omp_set_lock(&next_row_lock);
+        /* mandelbrot_set */
+        if (omp_get_thread_num() != 0) {
+            int row_idx;
+            while (1) {
+                /* get next row index */
+                #pragma omp critical
+                {
                     row_idx = next_row++;
-                    omp_unset_lock(&next_row_lock);
-                } while (row_idx < p_info->height);
+                }
+
+                if (row_idx >= p_info->height) {
+                    break;
+                }
+                mandelbrot_set(p_info, row_idx, image, p_info->ncpus - 1);   
             }
         }
     }
-    
-    write_png(filename, p_info->iters, p_info->width, p_info->height, image);
 
-    omp_destroy_lock(&next_row_lock);
+    write_png(filename, p_info->iters, p_info->width, p_info->height, image);
 
     free(image);
 }
@@ -301,6 +291,7 @@ int main(int argc, char** argv) {
     p_info.height = height;
 
     if (rank == size - 1) {
+        // control node
         master(&p_info, filename);
     } else {
         // compute node
