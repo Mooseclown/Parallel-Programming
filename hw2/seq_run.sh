@@ -16,4 +16,4 @@ h=${info[6]}
 
 echo ${info}
 
-srun -n12 -c2 time ./hw2b ./output/${type}${id}.png ${iter} ${x0} ${x1} ${y0} ${y1} ${w} ${h}
+srun time ./hw2seq ./output/${type}${id}.png ${iter} ${x0} ${x1} ${y0} ${y1} ${w} ${h}

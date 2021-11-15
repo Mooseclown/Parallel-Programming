@@ -2,8 +2,8 @@
 
 make all
 
-type=fast
-id=01
+type=strict
+id=34
 
 info=$(cat ./testcases/${type}${id}.txt)
 iter=${info[0]}
@@ -16,4 +16,4 @@ h=${info[6]}
 
 echo ${info}
 
-srun -n1 -c4 ./hw2a ./output/${type}${id}.png ${iter} ${x0} ${x1} ${y0} ${y1} ${w} ${h}
+srun -n1 -c2 ./hw2a ./output/${type}${id}.png ${iter} ${x0} ${x1} ${y0} ${y1} ${w} ${h}

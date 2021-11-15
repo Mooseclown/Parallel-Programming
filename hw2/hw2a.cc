@@ -129,14 +129,15 @@ void write_png(const char* filename, int iters, int width, int height, const int
     }
 
     /* init wirte_png_data */
-    struct write_png_data wp_data;
-    wp_data.png_ptr = png_ptr;
-    wp_data.rows = rows;
-    wp_data.row_size = row_size;
-    wp_data.rows_bitmap = rows_bitmap;
-    wp_data.buffer = buffer;
-    wp_data.color_idx = ncpus;
-    wp_data.png_idx = 0;
+    write_png_data wp_data = {
+        .png_ptr = png_ptr,
+        .rows = rows,
+        .row_size = row_size,
+        .rows_bitmap = rows_bitmap,
+        .buffer = buffer,
+        .color_idx = (int)ncpus,
+        .png_idx = 0,
+    };
     pthread_mutex_init(&wp_data.color_idx_mutex, 0);
     pthread_mutex_init(&wp_data.png_mutex, 0);
 
@@ -199,13 +200,12 @@ void *mandelbrot_set(void *info) {
 	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
 
     /* Vectorization */
-    __m128d y_idx_128d, x_idx_128d, x0_128d, y0_128d, x_128d, y_128d, temp_128d, a, b;
-    __m128d x_interval_128d, y_interval_128d, lower_128d, left_128d;
+    __m128d x0_128d, y0_128d, x_128d, y_128d, temp_128d;
+    __m128d x_interval_128d, left_128d;
     __m128d length_squared_128d, x_square_128d, y_square_128d;
     __m128d two, four, cmp_ge_four;
     __m128i repeats_128i, flag_128i, iters_128i, cmp_iters;
 
-    //x_interval_128d = _mm_set_pd1(m_data->x_interval * 2);
     x_interval_128d = _mm_set_pd1(m_data->x_interval);
     left_128d = _mm_set_pd1(t_info->left);
     two = _mm_set_pd1(2);
@@ -260,11 +260,11 @@ void *mandelbrot_set(void *info) {
                 /* length_squared < 4 */
                 cmp_ge_four = _mm_cmpge_pd(length_squared_128d, four);
 
-                if (cmp_ge_four[0] || cmp_iters[0]) {
+                if (flag_128i[0] && cmp_ge_four[0] || cmp_iters[0]) {
                     flag_128i[0] = 0;
                 }
 
-                if (cmp_ge_four[1] || cmp_iters[1]) {
+                if (flag_128i[1] && cmp_ge_four[1] || cmp_iters[1]) {
                     flag_128i[1] = 0;
                 }
             }
@@ -322,11 +322,12 @@ int main(int argc, char** argv) {
     assert(image);
 
     /* init mandelbrot_set_data */
-    struct mandelbrot_set_data m_data;
-    m_data.next_y_idx = ncpus;
-    m_data.image = image;
-    m_data.x_interval = (right - left) / width;
-    m_data.y_interval = (upper - lower) / height;
+    mandelbrot_set_data m_data = {
+        .next_y_idx = ncpus,
+        .image = image,
+        .x_interval = (right - left) / width,
+        .y_interval = (upper - lower) / height,
+    };
     pthread_mutex_init(&m_data.mutex, 0);
 
     /* create thread */
