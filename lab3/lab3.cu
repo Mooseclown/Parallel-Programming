@@ -140,9 +140,9 @@ __global__ void sobel (unsigned char* s, unsigned char* t, unsigned *height,
                     R = s[*channels * (*width * (y+v) + (x+u)) + 2];
                     G = s[*channels * (*width * (y+v) + (x+u)) + 1];
                     B = s[*channels * (*width * (y+v) + (x+u)) + 0];
-                    val[i*3+2] += R * s_mask[(i) * MASK_X * MASK_Y + (u + xBound) * MASK_X + (v + yBound)];
-                    val[i*3+1] += G * s_mask[(i) * MASK_X * MASK_Y + (u + xBound) * MASK_X + (v + yBound)];
-                    val[i*3+0] += B * s_mask[(i) * MASK_X * MASK_Y + (u + xBound) * MASK_X + (v + yBound)];
+                    val[i*3+2] += R * s_mask[(i) * MASK_X * MASK_Y + (u + xBound) * MASK_Y + (v + yBound)];
+                    val[i*3+1] += G * s_mask[(i) * MASK_X * MASK_Y + (u + xBound) * MASK_Y + (v + yBound)];
+                    val[i*3+0] += B * s_mask[(i) * MASK_X * MASK_Y + (u + xBound) * MASK_Y + (v + yBound)];
                 }    
             }
         }
