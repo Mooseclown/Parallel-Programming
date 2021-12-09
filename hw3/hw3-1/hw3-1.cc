@@ -11,8 +11,7 @@ void output(char* outFileName);
 
 void block_FW(int B);
 int ceil(int a, int b);
-void cal(int B, int Round);
-void parallel_cal(int B, int Round, int block_start_x, int block_start_y, int block_width, int block_height, int ncpus);
+void cal(int B, int Round, int block_start_x, int block_start_y, int block_width, int block_height, int ncpus);
 
 int n, m;
 static int Dist[V][V];
@@ -69,51 +68,24 @@ void block_FW(int B) {
     
     int round = ceil(n, B);
     for (int r = 0; r < round; ++r) {
-        printf("%d %d\n", r, round);
-        fflush(stdout);
         /* Phase 1*/
-        cal(B, r);
+        cal(B, r, r, r, 1, 1, ncpus);
 
         /* Phase 2*/
-        parallel_cal(B, r, r, 0, 1, r, ncpus);
-        parallel_cal(B, r, r, r + 1, 1, round - r - 1, ncpus);
-        parallel_cal(B, r, 0, r, r, 1, ncpus);
-        parallel_cal(B, r, r + 1, r, round - r - 1, 1, ncpus);
+        cal(B, r, r, 0, 1, r, ncpus);
+        cal(B, r, r, r + 1, 1, round - r - 1, ncpus);
+        cal(B, r, 0, r, r, 1, ncpus);
+        cal(B, r, r + 1, r, round - r - 1, 1, ncpus);
 
         /* Phase 3*/
-        parallel_cal(B, r, 0, 0, r, r, ncpus);
-        parallel_cal(B, r, 0, r + 1, r, round - r - 1, ncpus);
-        parallel_cal(B, r, r + 1, 0, round - r - 1, r, ncpus);
-        parallel_cal(B, r, r + 1, r + 1, round - r - 1, round - r - 1, ncpus);
+        cal(B, r, 0, 0, r, r, ncpus);
+        cal(B, r, 0, r + 1, r, round - r - 1, ncpus);
+        cal(B, r, r + 1, 0, round - r - 1, r, ncpus);
+        cal(B, r, r + 1, r + 1, round - r - 1, round - r - 1, ncpus);
     }
 }
 
-void cal(int B, int Round) {
-    int block_internal_start_x = Round * B;
-    int block_internal_end_x = (Round + 1) * B;
-    int block_internal_start_y = Round * B;
-    int block_internal_end_y = (Round + 1) * B;
-
-    if (block_internal_end_x > n) block_internal_end_x = n;
-    if (block_internal_end_y > n) block_internal_end_y = n;
-
-    // To calculate B*B elements in the block (b_i, b_j)
-    // For each block, it need to compute B times
-    for (int k = Round * B; k < (Round + 1) * B && k < n; ++k) {
-        // To calculate original index of elements in the block (b_i, b_j)
-        // For instance, original index of (0,0) in block (1,2) is (2,5) for V=6,B=2
-        for (int i = block_internal_start_x; i < block_internal_end_x; ++i) {
-            for (int j = block_internal_start_y; j < block_internal_end_y; ++j) {
-                if (Dist[i][k] + Dist[k][j] < Dist[i][j]) {
-                    Dist[i][j] = Dist[i][k] + Dist[k][j];
-                }
-            }
-        }
-    }
-}
-
-
-void parallel_cal(int B, int Round, int block_start_x, int block_start_y,
+void cal(int B, int Round, int block_start_x, int block_start_y,
          int block_width, int block_height, int ncpus) {
     
     int block_end_x = block_start_x + block_width;
