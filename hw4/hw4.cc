@@ -15,6 +15,7 @@ int rank, num_nodes;
 unsigned long ncpus;
 int num_reducer, delay, chunk_size, num_chunk;
 std::string job_name, input_filename, locality_config_filename, output_dir;
+int exec_time = 1;
 
 std::string metadata_dir = "/home/pp21/pp21s42/pp/hw4/metadata/";
 
@@ -162,6 +163,7 @@ void *mapper_task(void *opaque) {
             out.close();
         }
 
+        sleep(exec_time);
         send_reduce_filename(reduce_files, chunkID, num_K_V_pair, start_time);
     }
     pthread_exit(NULL);
@@ -260,6 +262,8 @@ void *reducer_task(void *opaque) {
 
         output(reduceID, word_count);
 
+        sleep(exec_time);
+
         /* return task finish */
         MPI_Send(&reduceID, 1, MPI_INT, 0, TASK_RETURN_COMPELTE,
                  MPI_COMM_WORLD);
@@ -289,33 +293,61 @@ void tasktracker() {
     pthread_join(reducer_thread, NULL);
 }
 
-void read_locality_config_file(std::map<int, int> &locality_config) {
+void read_locality_config_file(std::map<int, int> &locality_config, std::map<int, int> &locality_nodes) {
     std::ifstream locality_config_file(locality_config_filename);
     std::string line;
+
+    for (int i = 1; i < num_nodes; ++i) {
+        locality_nodes[i] = 0;
+    }
+
     while (getline(locality_config_file, line)) {
         size_t pos = 0;
-        std::string chunkID, nodeID;
+        int chunkID, nodeID;
         pos = line.find(" ");
-        chunkID = line.substr(0, pos);
-        nodeID = line.substr(pos + 1);
-        locality_config[std::stoi(chunkID)] = std::stoi(nodeID);
+        chunkID = std::stoi(line.substr(0, pos));
+        nodeID = std::stoi(line.substr(pos + 1));
+        nodeID %= (num_nodes - 1);
+        nodeID = nodeID == 0 ? nodeID + (num_nodes - 1) : nodeID;
+        locality_config[chunkID] = nodeID;
+        locality_nodes[nodeID]++;
     }
 }
 
-int get_chunk_by_locality_config(std::map<int, int> &locality_config, int nodeID) {
+int get_chunk_by_locality_config(std::map<int, int> &locality_config,
+                                 std::map<int, int> &locality_nodes, int nodeID) {
+    
     int chunkID;
     for (auto &item : locality_config) {
         if (item.second == nodeID) {
             chunkID = item.first;
             locality_config.erase(chunkID);
+            locality_nodes[nodeID]--;
             return chunkID;
         }
     }
 
+    int max_node = 0, max_node_count = 0;
+    for (auto item: locality_nodes) {
+        if (item.second > max_node_count) {
+            max_node = item.first;
+            max_node_count = item.second;
+        }
+    }
+
+    int do_time = delay + exec_time;
+    int not_do_time = ((max_node_count + (ncpus - 1) - 1) / (ncpus - 1) + 1) * exec_time;
+    if (do_time >= not_do_time) {
+        return 0;
+    }
+
     for (auto &item : locality_config) {
-        chunkID = item.first;
-        locality_config.erase(chunkID);
-        return chunkID * -1;
+        if (item.second == max_node) {
+            chunkID = item.first;
+            locality_config.erase(chunkID);
+            locality_nodes[max_node]--;
+            return chunkID * -1;
+        }
     }
     return 0;
 }
@@ -328,6 +360,7 @@ void *recv_reduce_filename(void *opaque) {
 	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
 
     std::ofstream &outfile = *(std::ofstream *)opaque;
+    std::string output_string;
 
     int recv_chunk_num = 0;
     int chunkID, nodeID;
@@ -353,8 +386,10 @@ void *recv_reduce_filename(void *opaque) {
         MPI_Recv(&start_time, 1, MPI_UNSIGNED_LONG, nodeID, TASK_RETURN_MATADATA_NAME, MPI_COMM_WORLD, &recv_status);
 
         unsigned long end_time = std::time(0);
-        outfile << end_time << ",Complete_Map Task," << chunkID << ","
-                << end_time - start_time << "\n";
+        output_string = std::to_string(end_time) + ",Complete_Map Task," +
+                        std::to_string(chunkID) + "," +
+                        std::to_string(end_time - start_time) + "\n";
+        outfile << output_string;
 
         /* record reduce filename */
         for (int i = 0; i < info[0]; ++i) {
@@ -369,7 +404,10 @@ void *recv_reduce_filename(void *opaque) {
 
     unsigned long start_time;
     start_time = std::time(0);
-    outfile << start_time << ",Start_Shuffle," << num_K_V_pair <<"\n";
+    output_string = std::to_string(start_time) + ",Start_Shuffle," +
+                    std::to_string(num_K_V_pair) + "\n";
+    outfile << output_string;
+
     for (int reduceID = 1; reduceID <= num_reducer; ++reduceID) {
         std::ofstream out(metadata_dir + job_name + "-" + std::to_string(reduceID) +
                            "-metadata.out");
@@ -388,7 +426,9 @@ void *recv_reduce_filename(void *opaque) {
         out.close();
     }
     unsigned long end_time = std::time(0);
-    outfile << end_time << ",Finish_Shuffle," << end_time - start_time << "\n";
+    output_string = std::to_string(end_time) + ",Finish_Shuffle," +
+                    std::to_string(end_time - start_time) + "\n";
+    outfile << output_string;
 
     pthread_exit(NULL);
 }
@@ -401,6 +441,7 @@ void *recv_reduce_complete(void *opaque) {
 	pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
 
     std::ofstream &outfile = *(std::ofstream *)opaque;
+    std::string output_string;
 
     int complete_reduce_task = 0;
     MPI_Status recv_status;
@@ -415,8 +456,11 @@ void *recv_reduce_complete(void *opaque) {
                  MPI_COMM_WORLD, &recv_status);
 
         unsigned long end_time = std::time(0);
-        outfile << end_time << ",Complete_ReduceTask," << reduceID << ","
-                << end_time - start_time << "\n";
+        output_string = std::to_string(end_time) + ",Complete_ReduceTask," +
+                        std::to_string(reduceID) + "," +
+                        std::to_string(end_time - start_time) + "\n";
+        outfile << output_string;
+
         ++complete_reduce_task;
     }
     pthread_exit(NULL);
@@ -433,15 +477,20 @@ void jobtracker() {
 
     unsigned long job_start_time = std::time(0);
 
-    outfile << job_start_time << ",Start_Job," << job_name << ","
-            << num_nodes << "," << ncpus << "," << num_reducer << ","
-            << delay << "," << input_filename << "," << chunk_size << ","
-            << locality_config_filename << "," << output_dir << std::endl;
+    std::string output_string;
+    output_string = std::to_string(job_start_time) + ",Start_Job," +
+                    job_name + "," + std::to_string(num_nodes) + "," +
+                    std::to_string(ncpus) + "," + std::to_string(num_reducer) +
+                    "," + std::to_string(delay) + "," + input_filename + "," +
+                    std::to_string(chunk_size) + "," + locality_config_filename +
+                    "," + output_dir + "\n";
 
+    outfile << output_string;
 
     /* read locality config file */
     std::map<int, int> locality_config;
-    read_locality_config_file(locality_config);
+    std::map<int, int> locality_nodes;
+    read_locality_config_file(locality_config, locality_nodes);
 
     /* create receive reduce filename thread */
     pthread_t recv_reduce_filename_thread;
@@ -457,7 +506,7 @@ void jobtracker() {
                  &recv_status);
 
         nodeID = recv_status.MPI_SOURCE;
-        chunkID = get_chunk_by_locality_config(locality_config, nodeID);
+        chunkID = get_chunk_by_locality_config(locality_config, locality_nodes, nodeID);
 
         /* send chunk ID */
         unsigned long start_time = std::time(0);
@@ -468,7 +517,11 @@ void jobtracker() {
             ++stop_mappers;
             continue;
         }
-        outfile << start_time << ",Dispatch_Map Task," << abs(chunkID) << "," << mapperID << "\n";
+
+        output_string = std::to_string(start_time) + ",Dispatch_Map Task," +
+                        std::to_string(abs(chunkID)) + "," +
+                        std::to_string(mapperID) + "\n";
+        outfile << output_string;
     }
 
     pthread_join(recv_reduce_filename_thread, NULL);
@@ -499,8 +552,9 @@ void jobtracker() {
         MPI_Send(&start_time, 1, MPI_UNSIGNED_LONG, reducerID, JOB_RETURN_REDUCE_ID, MPI_COMM_WORLD);
         
         if (data != 0) {
-            outfile << start_time << ",Dispatch_Reduce Task," << reduceID
-                    << "," << reducerID << "\n";
+            output_string = std::to_string(start_time) + ",Dispatch_Reduce Task," +
+                            std::to_string(reduceID) + "," + std::to_string(reduceID) + "\n";
+            outfile << output_string;
         }
         
         ++reduceID;
@@ -509,8 +563,9 @@ void jobtracker() {
     pthread_join(recv_reduce_complete_thread, NULL);
 
     unsigned long job_end_time = std::time(0);
-    outfile << job_end_time << ",Finish_Job,"
-            << job_end_time - job_start_time << "\n";
+    output_string = std::to_string(job_end_time) + ",Finish_Job," + 
+                    std::to_string(job_end_time - job_start_time) + "\n";
+    outfile << output_string;
 
     outfile.close();
 }
