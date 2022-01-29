@@ -15,7 +15,7 @@ int rank, num_nodes;
 unsigned long ncpus;
 int num_reducer, delay, chunk_size, num_chunk;
 std::string job_name, input_filename, locality_config_filename, output_dir;
-int exec_time = 1;
+int exec_time = 0;
 
 std::string metadata_dir = "/home/pp21/pp21s42/pp/hw4/metadata/";
 
@@ -92,7 +92,7 @@ void map(std::map<int, std::string> &record, std::map<std::string, int> &word_co
 int partition(std::string word) {
     std::hash<std::string> hash_obj;
 
-    return hash_obj(word) % num_reducer + 1;
+    return hash_obj(word.substr(0, 1)) % num_reducer + 1;
 }
 
 void send_reduce_filename(std::map<int, std::vector<Item>> reduce_files,
@@ -202,11 +202,11 @@ void read_reduce_file(int reduceID, std::vector<Item> &wordcount_list) {
 
 void sort(std::vector<Item> &wordcount_list) {
     std::sort(wordcount_list.begin(), wordcount_list.end(), [](const Item &item1, const Item &item2) -> bool
-              { return item1.first < item2.first; });
+              { return item1.first > item2.first; });
 }
 
 void group(std::vector<Item> &wordcount_list, std::map<std::string, std::vector<int>> &word_counts) {
-    for (auto word_count : wordcount_list) {
+    for (auto &word_count : wordcount_list) {
         if (word_counts.count(word_count.first) == 0) {
             std::vector<int> counts;
             word_counts[word_count.first] = counts;
@@ -215,7 +215,8 @@ void group(std::vector<Item> &wordcount_list, std::map<std::string, std::vector<
     }
 }
 
-void reduce(std::map<std::string, std::vector<int>> &word_counts, std::map<std::string, int> &word_count) {
+void reduce(std::map<std::string, std::vector<int>> &word_counts,
+            std::map<std::string, int> &word_count) {
     int total_count;
     for (auto item : word_counts) {
         total_count = 0;
@@ -255,7 +256,13 @@ void *reducer_task(void *opaque) {
         sort(wordcount_list);
 
         std::map<std::string, std::vector<int>> word_counts;
+
         group(wordcount_list, word_counts);
+        if (reduceID == 1) {
+            for (auto word_count : word_counts) {
+                std::cout << word_count.first << std::endl;
+            }
+        }
 
         std::map<std::string, int> word_count;
         reduce(word_counts, word_count);
